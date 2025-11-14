@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
     println!("Read {} rows from {}", input_rows.len(), input_range);
 
     // Show first 10 rows from the input so we can confirm the data shape
-    preview_rows(&input_rows, 3);
+    preview_rows(&input_rows, 7);
     debug_print_scopes(&http, &bearer).await?;
     // --- aggregate in Rust ---
     // Expect rows like: [Worker, Date, Hours]
@@ -297,7 +297,7 @@ fn preview_rows(rows: &[Vec<String>], max: usize) {
     println!("\n--- Input preview (up to {max} rows) ---");
     println!("{:<12} | {:<10} | {:>5}", "Worker", "Date", "Hours");
     println!("{:-<12}-+-{:-<10}-+-{:-<5}", "", "", "");
-    for (i, row) in rows.iter().take(max).enumerate() {
+    for (_i, row) in rows.iter().take(max).enumerate() {
         let w = row.get(0).map(String::as_str).unwrap_or("");
         let d = row.get(1).map(String::as_str).unwrap_or("");
         let h = row.get(2).map(String::as_str).unwrap_or("");
