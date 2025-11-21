@@ -1,6 +1,4 @@
-// src/bin/oauth_flow.rs
-
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use dotenvy::dotenv;
 use reqwest::Client;
 use serde::Deserialize;
@@ -8,17 +6,22 @@ use serde_json::json;
 use std::{
     collections::BTreeMap,
     env,
+    fs,
     io::{self, Write},
+    path::Path,
 };
 use urlencoding::encode;
 
-// ---------- Types ----------
+// Where we cache the refresh token.
+const REFRESH_TOKEN_PATH: &str = "credentials/refresh_token.txt";
+
+/// ---------- Types ----------
 
 #[derive(Debug, Deserialize)]
 struct ValuesResp {
     values: Option<Vec<Vec<String>>>,
 }
-
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct TokenResp {
     access_token: String,
@@ -28,21 +31,20 @@ struct TokenResp {
     token_type: String,
 }
 
-// ---------- Main ----------
+/// ---------- Main ----------
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv().ok(); // load .env in project root
+    dotenv().ok(); // load .env
 
     // --- config from .env ---
     let client_id = env::var("CLIENT_ID").context("Missing CLIENT_ID")?;
     let client_secret = env::var("CLIENT_SECRET").context("Missing CLIENT_SECRET")?;
 
-    // You can keep using the OOB redirect for this manual flow.
     let redirect_uri = env::var("REDIRECT_URI")
+        // for manual copy-paste we default to out-of-band redirect
         .unwrap_or_else(|_| "urn:ietf:wg:oauth:2.0:oob".to_string());
 
-    // SCOPES can be comma- or space-separated in .env
     let scopes = env::var("SCOPES").unwrap_or_else(|_| {
         "https://www.googleapis.com/auth/spreadsheets \
          https://www.googleapis.com/auth/drive.file"
@@ -56,13 +58,14 @@ async fn main() -> Result<()> {
     let output_title = env::var("OUTPUT_TITLE")
         .unwrap_or_else(|_| "Rust Demo – OAuth Output".to_string());
 
-    // Optional: folder to put the output sheet in (My Drive folder ID)
-    // Leave empty / unset to create in root.
+    // Optional: folder to create the output file in.
+    // Leave unset to create in My Drive root.
     let output_folder_id = env::var("OUTPUT_FOLDER_ID").ok();
 
-    // ---------- OAuth copy-paste flow ----------
     let http = Client::new();
-    let bearer = get_access_token_manual(
+
+    // ---------- OAuth with refresh-token cache ----------
+    let bearer = get_access_token(
         &http,
         &client_id,
         &client_secret,
@@ -72,27 +75,21 @@ async fn main() -> Result<()> {
     .await?;
 
     // ---------- Read input sheet ----------
-    let input_rows = read_values(&http, &bearer, &input_sheet_id, &input_range).await?;
-    println!("Read {} rows from {}", input_rows.len(), input_range);
-    preview_rows(&input_rows, 7);
+    let rows = read_values(&http, &bearer, &input_sheet_id, &input_range).await?;
+    println!("Read {} rows from {}", rows.len(), input_range);
+    preview_rows(&rows, 7);
 
     debug_print_scopes(&http, &bearer).await?;
 
     // ---------- Aggregate in Rust ----------
-    let totals = aggregate_hours_per_worker(&input_rows)?;
+    let totals = aggregate_hours_per_worker(&rows)?;
 
     // ---------- Create / reuse output sheet ----------
     let output_id = if let Ok(existing) = env::var("OUTPUT_SHEET_ID") {
         println!("Using existing output sheet: {}", existing);
         existing
     } else {
-        create_spreadsheet(
-            &http,
-            &bearer,
-            &output_title,
-            output_folder_id.as_deref(), // Option<&str>
-        )
-        .await?
+        create_spreadsheet(&http, &bearer, &output_title, output_folder_id.as_deref()).await?
     };
 
     println!(
@@ -140,15 +137,61 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// ---------- OAuth helpers ----------
+/// ---------- OAuth helpers ----------
 
-async fn get_access_token_manual(
+/// High-level helper: use refresh token if we have one; otherwise fall back to
+/// manual copy-paste and cache the refresh token.
+async fn get_access_token(
     http: &Client,
     client_id: &str,
     client_secret: &str,
     redirect_uri: &str,
     scopes: &str,
 ) -> Result<String> {
+    // Try refresh_token from local file first
+    if let Ok(contents) = fs::read_to_string(REFRESH_TOKEN_PATH) {
+        let refresh_token = contents.trim();
+        if !refresh_token.is_empty() {
+            match refresh_with_token(http, client_id, client_secret, refresh_token).await {
+                Ok(token) => {
+                    println!("✅ Used cached refresh token from {}", REFRESH_TOKEN_PATH);
+                    return Ok(token);
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Refresh token failed ({e}); falling back to manual login…");
+                }
+            }
+        }
+    }
+
+    // No valid refresh token: do full browser flow
+    let (access_token, maybe_refresh) =
+        get_access_token_manual(http, client_id, client_secret, redirect_uri, scopes).await?;
+
+    // Save refresh token if Google gave us one
+    if let Some(rt) = maybe_refresh {
+        if !rt.is_empty() {
+            if let Some(parent) = Path::new(REFRESH_TOKEN_PATH).parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(REFRESH_TOKEN_PATH, &rt)?;
+            println!("💾 Saved refresh token to {}", REFRESH_TOKEN_PATH);
+        }
+    } else {
+        println!("(No refresh token returned; you may need to log in again next time.)");
+    }
+
+    Ok(access_token)
+}
+
+/// Manual browser + copy-paste flow. Returns (access_token, refresh_token).
+async fn get_access_token_manual(
+    http: &Client,
+    client_id: &str,
+    client_secret: &str,
+    redirect_uri: &str,
+    scopes: &str,
+) -> Result<(String, Option<String>)> {
     // Google expects scopes space-separated
     let scopes_for_url = scopes.replace(',', " ");
 
@@ -174,10 +217,6 @@ async fn get_access_token_manual(
     io::stdin().read_line(&mut code)?;
     let code = code.trim();
 
-    if code.is_empty() {
-        return Err(anyhow!("No authorization code entered"));
-    }
-
     // Exchange code for tokens
     let params = [
         ("code", code),
@@ -197,14 +236,41 @@ async fn get_access_token_manual(
         .await?;
 
     if let Some(ref_token) = &resp.refresh_token {
-        println!("Got refresh token (store this if you want to reuse it later).");
-        println!("refresh_token={}", ref_token);
+        println!("Got refresh token; will cache it for next runs.");
+        println!("(You don't need to save it manually.)");
+        Ok((resp.access_token, Some(ref_token.clone())))
+    } else {
+        Ok((resp.access_token, None))
     }
+}
+
+/// Use the refresh_token to get a new access_token.
+async fn refresh_with_token(
+    http: &Client,
+    client_id: &str,
+    client_secret: &str,
+    refresh_token: &str,
+) -> Result<String> {
+    let params = [
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("refresh_token", refresh_token),
+        ("grant_type", "refresh_token"),
+    ];
+
+    let resp = http
+        .post("https://oauth2.googleapis.com/token")
+        .form(&params)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<TokenResp>()
+        .await?;
 
     Ok(resp.access_token)
 }
 
-// ---------- Sheets / Drive helpers ----------
+/// ---------- Sheets / Drive helpers ----------
 
 async fn read_values(
     http: &Client,
@@ -231,7 +297,7 @@ async fn read_values(
 }
 
 // Create a Google Spreadsheet using the Drive API, then return its file ID.
-// If parent_folder_id is Some, the file is created inside that folder.
+// If parent_folder_id is Some(id), the file is created inside that folder.
 async fn create_spreadsheet(
     http: &Client,
     bearer: &str,
@@ -240,18 +306,14 @@ async fn create_spreadsheet(
 ) -> Result<String> {
     let url = "https://www.googleapis.com/drive/v3/files?fields=id";
 
-    let body = if let Some(folder_id) = parent_folder_id {
-        json!({
-            "name": title,
-            "mimeType": "application/vnd.google-apps.spreadsheet",
-            "parents": [folder_id],
-        })
-    } else {
-        json!({
-            "name": title,
-            "mimeType": "application/vnd.google-apps.spreadsheet",
-        })
-    };
+    let mut body = json!({
+        "name": title,
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+    });
+
+    if let Some(folder_id) = parent_folder_id {
+        body["parents"] = json!([folder_id]);
+    }
 
     let resp = http
         .post(url)
@@ -264,7 +326,7 @@ async fn create_spreadsheet(
     let text = resp.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        return Err(anyhow!("Drive files.create failed: {} — {}", status, text));
+        anyhow::bail!("Drive files.create failed: {} — {}", status, text);
     }
 
     let v: serde_json::Value = serde_json::from_str(&text)?;
@@ -303,7 +365,7 @@ async fn write_values_user_entered(
     Ok(())
 }
 
-// ---------- Aggregation + debug helpers ----------
+/// ---------- Aggregation + debug helpers ----------
 
 fn aggregate_hours_per_worker(rows: &[Vec<String>]) -> Result<Vec<(String, f64)>> {
     let mut map: BTreeMap<String, f64> = BTreeMap::new();

@@ -1,7 +1,13 @@
-service-account.json
-*.json
-/target
+
 .vscode/
 .idea/
-credentials/*.json
+
+# Rust / Cargo
+/target
+*.json
+# Local env
 .env
+
+# Credentials (service accounts, OAuth tokens, etc.)
+credentials/*
+!credentials/.gitkeep
