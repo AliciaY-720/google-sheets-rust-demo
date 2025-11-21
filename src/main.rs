@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
 
     // --- auth (service account) ---
     let sa_key_path = env::var("GOOGLE_APPLICATION_CREDENTIALS")
-        .unwrap_or_else(|_| "service-account.json".into());
+        .unwrap_or_else(|_| "credentials/service-account.json".into());
 
     // read the service account JSON (works across yup-oauth2 versions)
     let sa_key: ServiceAccountKey = read_service_account_key(&sa_key_path)

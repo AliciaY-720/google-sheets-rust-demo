@@ -3,3 +3,5 @@ service-account.json
 /target
 .vscode/
 .idea/
+credentials/*.json
+.env
