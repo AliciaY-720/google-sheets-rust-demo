@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use dotenvy::dotenv;
-use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -21,14 +20,14 @@ const REFRESH_TOKEN_PATH: &str = "credentials/refresh_token.txt";
 struct ValuesResp {
     values: Option<Vec<Vec<String>>>,
 }
-#[allow(dead_code)]
+// #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct TokenResp {
     access_token: String,
     refresh_token: Option<String>,
-    expires_in: i64,
-    scope: String,
-    token_type: String,
+    // expires_in: i64,
+    // scope: String,
+    // token_type: String,
 }
 
 /// ---------- Main ----------
@@ -56,13 +55,13 @@ async fn main() -> Result<()> {
     let input_range =
         env::var("INPUT_RANGE").unwrap_or_else(|_| "Sheet1!A2:C".to_string());
     let output_title = env::var("OUTPUT_TITLE")
-        .unwrap_or_else(|_| "Rust Demo – OAuth Output".to_string());
+        .unwrap_or_else(|_| "Rust Demo - OAuth Output".to_string());
 
     // Optional: folder to create the output file in.
     // Leave unset to create in My Drive root.
     let output_folder_id = env::var("OUTPUT_FOLDER_ID").ok();
 
-    let http = Client::new();
+    let http = reqwest::Client::new();
 
     // ---------- OAuth with refresh-token cache ----------
     let bearer = get_access_token(
@@ -142,7 +141,7 @@ async fn main() -> Result<()> {
 /// High-level helper: use refresh token if we have one; otherwise fall back to
 /// manual copy-paste and cache the refresh token.
 async fn get_access_token(
-    http: &Client,
+    http: &reqwest::Client,
     client_id: &str,
     client_secret: &str,
     redirect_uri: &str,
@@ -186,7 +185,7 @@ async fn get_access_token(
 
 /// Manual browser + copy-paste flow. Returns (access_token, refresh_token).
 async fn get_access_token_manual(
-    http: &Client,
+    http: &reqwest::Client,
     client_id: &str,
     client_secret: &str,
     redirect_uri: &str,
@@ -246,7 +245,7 @@ async fn get_access_token_manual(
 
 /// Use the refresh_token to get a new access_token.
 async fn refresh_with_token(
-    http: &Client,
+    http: &reqwest::Client,
     client_id: &str,
     client_secret: &str,
     refresh_token: &str,
@@ -273,7 +272,7 @@ async fn refresh_with_token(
 /// ---------- Sheets / Drive helpers ----------
 
 async fn read_values(
-    http: &Client,
+    http: &reqwest::Client,
     bearer: &str,
     sheet_id: &str,
     range: &str,
@@ -299,7 +298,7 @@ async fn read_values(
 // Create a Google Spreadsheet using the Drive API, then return its file ID.
 // If parent_folder_id is Some(id), the file is created inside that folder.
 async fn create_spreadsheet(
-    http: &Client,
+    http: &reqwest::Client,
     bearer: &str,
     title: &str,
     parent_folder_id: Option<&str>,
@@ -337,7 +336,7 @@ async fn create_spreadsheet(
 }
 
 async fn write_values_user_entered(
-    http: &Client,
+    http: &reqwest::Client,
     bearer: &str,
     sheet_id: &str,
     range: &str,
@@ -407,7 +406,7 @@ fn preview_rows(rows: &[Vec<String>], max: usize) {
     println!("----------------------------------------\n");
 }
 
-async fn debug_print_scopes(http: &Client, bearer: &str) -> Result<()> {
+async fn debug_print_scopes(http: &reqwest::Client, bearer: &str) -> Result<()> {
     let url = format!(
         "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token={}",
         bearer
