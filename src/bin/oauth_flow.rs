@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context};
 use dotenvy::dotenv;
 use serde::Deserialize;
 use serde_json::json;
@@ -33,7 +33,7 @@ struct TokenResp {
 /// ---------- Main ----------
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     dotenv().ok(); // load .env
 
     // --- config from .env ---
@@ -146,7 +146,7 @@ async fn get_access_token(
     client_secret: &str,
     redirect_uri: &str,
     scopes: &str,
-) -> Result<String> {
+) -> anyhow::Result<String> {
     // Try refresh_token from local file first
     if let Ok(contents) = fs::read_to_string(REFRESH_TOKEN_PATH) {
         let refresh_token = contents.trim();
@@ -190,7 +190,7 @@ async fn get_access_token_manual(
     client_secret: &str,
     redirect_uri: &str,
     scopes: &str,
-) -> Result<(String, Option<String>)> {
+) -> anyhow::Result<(String, Option<String>)> {
     // Google expects scopes space-separated
     let scopes_for_url = scopes.replace(',', " ");
 
@@ -249,7 +249,7 @@ async fn refresh_with_token(
     client_id: &str,
     client_secret: &str,
     refresh_token: &str,
-) -> Result<String> {
+) -> anyhow::Result<String> {
     let params = [
         ("client_id", client_id),
         ("client_secret", client_secret),
@@ -276,7 +276,7 @@ async fn read_values(
     bearer: &str,
     sheet_id: &str,
     range: &str,
-) -> Result<Vec<Vec<String>>> {
+) -> anyhow::Result<Vec<Vec<String>>> {
     let url = format!(
         "https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}",
         sheet_id,
@@ -302,7 +302,7 @@ async fn create_spreadsheet(
     bearer: &str,
     title: &str,
     parent_folder_id: Option<&str>,
-) -> Result<String> {
+) -> anyhow::Result<String> {
     let url = "https://www.googleapis.com/drive/v3/files?fields=id";
 
     let mut body = json!({
@@ -341,7 +341,7 @@ async fn write_values_user_entered(
     sheet_id: &str,
     range: &str,
     values: Vec<Vec<String>>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     let body = json!({
         "range": range,
         "majorDimension": "ROWS",
@@ -366,7 +366,7 @@ async fn write_values_user_entered(
 
 /// ---------- Aggregation + debug helpers ----------
 
-fn aggregate_hours_per_worker(rows: &[Vec<String>]) -> Result<Vec<(String, f64)>> {
+fn aggregate_hours_per_worker(rows: &[Vec<String>]) -> anyhow::Result<Vec<(String, f64)>> {
     let mut map: BTreeMap<String, f64> = BTreeMap::new();
     for row in rows {
         if row.len() < 3 {
@@ -406,7 +406,7 @@ fn preview_rows(rows: &[Vec<String>], max: usize) {
     println!("----------------------------------------\n");
 }
 
-async fn debug_print_scopes(http: &reqwest::Client, bearer: &str) -> Result<()> {
+async fn debug_print_scopes(http: &reqwest::Client, bearer: &str) -> anyhow::Result<()> {
     let url = format!(
         "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token={}",
         bearer
