@@ -176,6 +176,9 @@ async fn get_access_token(
             fs::write(REFRESH_TOKEN_PATH, &rt)?;
             println!("💾 Saved refresh token to {}", REFRESH_TOKEN_PATH);
         }
+        else {
+            println!("(Received empty refresh token; not saving; you may need to log in again next time.)");
+        }
     } else {
         println!("(No refresh token returned; you may need to log in again next time.)");
     }
